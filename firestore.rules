@@ -1,0 +1,84 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    /**
+     * SnapText Security Rules
+     * 
+     * CORE PHILOSOPHY:
+     * This ruleset implements a "Public Read, Authenticated Creator" model. It leverages identity 
+     * denormalization to ensure high performance and strict authorization without cross-document 
+     * lookups.
+     * 
+     * DATA STRUCTURE:
+     * - /reviews/{reviewId}: A flat, top-level collection containing all user-submitted reviews.
+     * 
+     * KEY SECURITY DECISIONS:
+     * - Public Access: Reviews are intended for public consumption; therefore, 'get' and 'list' 
+     *   operations are open to all users, including unauthenticated ones.
+     * - Identity Anchoring: Authorization for creating reviews is tied directly to the user's 
+     *   Firebase Auth token. We enforce that the 'userEmail' and 'userName' in the document 
+     *   match the authenticated user's token exactly.
+     * - Ownership-Based Writes: While the primary focus of the IR is on creation, this ruleset 
+     *   extends protection to updates and deletes by ensuring only the original author (identified 
+     *   by email) can modify or remove their content.
+     * 
+     * DENORMALIZATION FOR AUTHORIZATION:
+     * We avoid costly `get()` calls by storing `userEmail` directly on each review. This allows 
+     * for immediate, synchronous validation of the author's identity during write operations.
+     */
+
+    // --- HELPER FUNCTIONS ---
+
+    /**
+     * @description Checks if the request is made by an authenticated user.
+     */
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    /**
+     * @description Compares a provided email against the email in the authenticated user's token.
+     */
+    function isOwner(userEmail) {
+      return isSignedIn() && request.auth.token.email == userEmail;
+    }
+
+    /**
+     * @description Ensures the document exists and the requester is the owner.
+     * Used for destructive or state-changing operations (update/delete).
+     */
+    function isExistingOwner(userEmail) {
+      return resource != null && isOwner(userEmail);
+    }
+
+    // --- COLLECTION RULES ---
+
+    /**
+     * @description Rules for the 'reviews' collection. Publicly readable, 
+     * but writes are restricted to the verified author.
+     * @path /reviews/{reviewId}
+     * @allow get, list: if true; (Publicly accessible)
+     * @allow create: if isSignedIn() && request.resource.data.userEmail == request.auth.token.email;
+     * @deny create: if userEmail in data does not match the authenticated user's email.
+     * @principle Public Read with Owner-Only Writes. Validates identity against Auth Token.
+     */
+    match /reviews/{reviewId} {
+      // Public Read Access
+      allow get, list: if true;
+
+      // Authenticated Creation: Must be signed in and data must match Auth Token identity.
+      allow create: if isSignedIn() 
+                    && request.resource.data.userEmail == request.auth.token.email
+                    && request.resource.data.userName == request.auth.token.name;
+
+      // Ownership Updates: Only the creator can update. Protects relational integrity of email.
+      allow update: if isExistingOwner(resource.data.userEmail)
+                    && request.resource.data.userEmail == resource.data.userEmail;
+
+      // Ownership Deletion: Only the creator can delete.
+      allow delete: if isExistingOwner(resource.data.userEmail);
+    }
+
+  }
+}

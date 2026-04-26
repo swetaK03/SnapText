@@ -1,0 +1,73 @@
+{
+  "entities": {
+    "Review": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "title": "Review",
+      "type": "object",
+      "description": "Represents a user-submitted review for the SnapText application.",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for the Review entity."
+        },
+        "userName": {
+          "type": "string",
+          "description": "The name of the user who submitted the review."
+        },
+        "userEmail": {
+          "type": "string",
+          "description": "The email address of the user who submitted the review.",
+          "format": "email"
+        },
+        "rating": {
+          "type": "number",
+          "description": "The numerical rating given by the user (e.g., 1-5 stars)."
+        },
+        "reviewText": {
+          "type": "string",
+          "description": "The detailed text content of the user's review."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "The timestamp indicating when the review was created.",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userName",
+        "userEmail",
+        "rating",
+        "reviewText",
+        "createdAt"
+      ]
+    }
+  },
+  "auth": {
+    "providers": [
+      "password",
+      "anonymous"
+    ]
+  },
+  "firestore": {
+    "structure": [
+      {
+        "path": "/reviews/{reviewId}",
+        "definition": {
+          "entityName": "Review",
+          "schema": {
+            "$ref": "#/backend/entities/Review"
+          },
+          "description": "Stores user-submitted reviews. All reviews are publicly readable. Includes denormalized 'userEmail' and 'userName' for authorization independence on creation, ensuring the creator is the authenticated user.",
+          "params": [
+            {
+              "name": "reviewId",
+              "description": "The unique ID of the review document."
+            }
+          ]
+        }
+      }
+    ],
+    "reasoning": "The Firestore structure for the SnapText application is designed around a single top-level collection: `/reviews`. This collection will store all user-submitted reviews for the application.\n\n**Authorization Independence:** This structure achieves authorization independence by denormalizing crucial authorization context directly into each `Review` document. Specifically, the `userEmail` and `userName` fields within each `Review` document are intended to match the authenticated user's email and name from `request.auth.token`. When a user attempts to *create* a new review, the Firestore security rules will directly compare the submitted `request.resource.data.userEmail` and `request.resource.data.userName` against `request.auth.token.email` and `request.auth.token.name` respectively. This eliminates the need for any `get()` calls to other collections (e.g., a `/users` collection) to verify identity or ownership, thereby simplifying rules, improving performance, and supporting atomic write operations.\n\n**QAPs (Queryable Access Patterns):**\n1.  **Read Operations (List & Get):** All documents within the `/reviews` collection share a homogeneous security posture: they are publicly readable. This means any authenticated or unauthenticated user can `get` a specific review or `list` all reviews. This fully supports QAPs, as any `list` query will directly return all allowed documents without needing server-side filtering based on complex authorization logic.\n2.  **Create Operations:** Only logged-in users are permitted to create reviews. The security rule for creation will enforce that `request.auth.uid` is not null and that the `userEmail` and `userName` fields in the new review document match the authenticated user's credentials (`request.auth.token.email` and `request.auth.token.name`). This is a QAP because the server can deterministically allow or deny the write based solely on the `request` object and the proposed document data, without any post-query filtering.\n\nThis simple, flat structure with embedded authorization data aligns with all core design principles, providing clear, robust, and easily debuggable security rules while ensuring scalability and performance for the specified application features."
+  }
+}
